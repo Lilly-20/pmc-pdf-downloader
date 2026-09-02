@@ -1,0 +1,27 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pkg
+        run: npm install -g @yao-pkg/pkg
+
+      - name: Build exe
+        run: pkg pmc_downloader_app.js -t node22-win-x64 -o "PMC全文下载器.exe"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: PMC全文下载器.exe

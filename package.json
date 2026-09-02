@@ -1,0 +1,19 @@
+{
+  "name": "pmc-pdf-downloader",
+  "version": "1.0.0",
+  "description": "本地批量下载 PMC 免费全文 PDF 的小工具（图形界面 + 命令行）",
+  "main": "pmc_downloader_app.js",
+  "bin": "pmc_downloader_app.js",
+  "pkg": {
+    "targets": ["node22-win-x64"],
+    "outputPath": "dist"
+  },
+  "scripts": {
+    "start": "node pmc_downloader_app.js",
+    "build": "pkg ."
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
