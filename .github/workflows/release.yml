@@ -18,10 +18,35 @@ jobs:
       - name: Install pkg
         run: npm install -g @yao-pkg/pkg
 
-      - name: Build exe
-        run: pkg pmc_downloader_app.js -t node22-win-x64 -o "PMC全文下载器.exe"
+      - name: Build Windows exe
+        run: pkg pmc_downloader_app.js -t node22-win-x64 -o "PMC-PDF-Downloader-Windows.exe"
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: PMC全文下载器.exe
+          files: PMC-PDF-Downloader-Windows.exe
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pkg
+        run: npm install -g @yao-pkg/pkg
+
+      - name: Build macOS Intel
+        run: pkg pmc_downloader_app.js -t node22-macos-x64 -o "PMC-PDF-Downloader-macOS-Intel"
+
+      - name: Build macOS Apple Silicon
+        run: pkg pmc_downloader_app.js -t node22-macos-arm64 -o "PMC-PDF-Downloader-macOS-Apple"
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PMC-PDF-Downloader-macOS-Intel
+            PMC-PDF-Downloader-macOS-Apple
