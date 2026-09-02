@@ -1,6 +1,6 @@
 {
   "name": "pmc-pdf-downloader",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "本地批量下载 PMC 免费全文 PDF 的小工具（图形界面 + 命令行）",
   "main": "pmc_downloader_app.js",
   "bin": "pmc_downloader_app.js",
