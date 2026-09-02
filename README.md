@@ -1,8 +1,16 @@
 # 📚 PMC 全文批量下载器
 
+> **⚠️ 这是源代码仓库，不是软件本身。**
+> - **普通用户**：直接去 [**Releases 页面**](../../releases) 下载 `PMC-PDF-Downloader.exe`，双击就能用，零依赖。
+> - **开发者 / 想自己改代码**：装 Node.js 22+，在本目录下 `npm install`，再往下看。
+
 一个本地运行的小工具：粘贴文献列表，自动从 **PMC（PubMed Central）** 批量下载**有免费全文**的文献 PDF，按「第一作者 年份 - 标题」自动命名，直接拖进 Zotero 即可。
 
-专为以下场景设计：机构没有外文数据库订阅、Zotero「查找可用 PDF」失灵、浏览器插件装不了。零依赖、免安装、双击即用。
+专为以下场景设计：机构没有外文数据库订阅、Zotero「查找可用 PDF」失灵、浏览器插件装不了。
+
+## 🤔 为什么 Release 里下载，不直接放在 git 里？
+
+exe 单文件 57 MB，二进制文件 git 没法 diff/merge、克隆时会一并拉下来，仓库会臃肿到几百兆。这是开源项目的业界标准做法，VSCode / Chrome / Python 都是这样：**源代码进 git，构建产物走 Release**。
 
 ## ✨ 特性
 
@@ -19,7 +27,7 @@
 
 ### 方式一：图形界面（推荐）
 
-1. 下载 [Releases](../../releases) 里的 `PMC全文下载器.exe`（或按下方说明自行打包）
+1. 下载 [Releases](../../releases) 里的 `PMC-PDF-Downloader.exe`（或按下方说明自行打包）
 2. 双击运行，浏览器自动打开操作页面（`http://127.0.0.1:3737`）
 3. 输入框支持两种写法（可混用）：
    - 每行一个 PMID / PMCID / DOI
@@ -41,7 +49,7 @@ node download_pdfs.js ids.txt ./文献PDF
 
 ```bash
 npm install -g @yao-pkg/pkg
-pkg pmc_downloader_app.js -t node22-win-x64 -o PMC全文下载器.exe
+pkg pmc_downloader_app.js -t node22-win-x64 -o PMC-PDF-Downloader.exe
 ```
 
 也可以直接 push 一个 tag（如 `v1.0.0`），GitHub Actions 会自动构建并发布 exe（见 `.github/workflows/release.yml`）。
