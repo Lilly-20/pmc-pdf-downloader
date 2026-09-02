@@ -42,6 +42,19 @@ const get = async (url, tries = 3) => {
 };
 const sanitize = s => s.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
 
+// 从任意混合文本（如 Zotero 复制的参考文献表）中提取文献编号
+function extractIds(text) {
+  const ids = [], seen = new Set();
+  const push = x => { const k = x.toLowerCase(); if (!seen.has(k)) { seen.add(k); ids.push(x); } };
+  // DOI：10.xxxx/xxx，去掉尾部句号逗号等标点
+  for (const m of text.matchAll(/\b10\.\d{4,9}\/[^\s"'<>，。；、]+/g)) push(m[0].replace(/[.,;:)\]」』]+$/, ''));
+  // PMCID
+  for (const m of text.matchAll(/\bPMC\d{6,9}\b/gi)) push(m[0].toUpperCase());
+  // PMID：整行只有6-9位数字才算（避免误吞年份、页码、期卷号）
+  for (const line of text.split(/\r?\n/)) { const t = line.trim(); if (/^\d{6,9}$/.test(t)) push(t); }
+  return ids;
+}
+
 async function resolve(id) {
   const q = id.toUpperCase().startsWith('PMC') ? `PMCID:${id.toUpperCase()}`
     : id.includes('/') || id.startsWith('10.') ? `DOI:"${id}"`
@@ -134,11 +147,11 @@ button.gray{background:#8a919c} button:disabled{background:#b9c2cf;cursor:not-al
 </style></head><body>
 <h1>📚 PMC 全文批量下载器</h1>
 <div class="card">
-  <label>文献编号（每行一个，支持 PMID / PMCID / DOI）</label>
-  <textarea id="ids" placeholder="42670262&#10;PMC13527554&#10;10.1002/sim.70722"></textarea>
+  <label>文献列表（每行一个 PMID / PMCID / DOI，或直接粘贴 Zotero 复制的参考文献表，自动识别其中的 DOI）</label>
+  <textarea id="ids" placeholder="可整段粘贴参考文献表，例如：&#10;Austin, Peter C., et al. “Graphical Calibration Curves...” Diagnostic and Prognostic Research 6, no. 1 (2022): 2. https://doi.org/10.1186/s41512-021-00114-6.&#10;&#10;也支持每行一个编号：&#10;42670262&#10;PMC13527554&#10;10.1002/sim.70722"></textarea>
   <label>保存位置（PDF 都存在这个文件夹）</label>
   <input type="text" id="outdir">
-  <div class="hint">提示：双击桌面上的图标运行本工具时，会自动打开此页面；下载完的 PDF 直接拖进 Zotero 对应条目即可。工具只能下载 PMC 上有免费版的文献，纯付费墙的仍需文献传递或邮件索要。</div>
+  <div class="hint">提示：从 Zotero 全选条目 → 右键“由所选条目创建参考文献表”→ 复制后直接粘贴到上面即可，无需整理格式。下载完的 PDF 拖进 Zotero 对应条目。工具只能下载 PMC 上有免费版的文献，纯付费墙的仍需文献传递或邮件索要。</div>
   <div class="row" style="margin-top:14px">
     <button id="start" onclick="start()">开始下载</button>
     <button id="stop" class="gray" onclick="stop()" disabled>停止</button>
@@ -152,12 +165,12 @@ button.gray{background:#8a919c} button:disabled{background:#b9c2cf;cursor:not-al
 let timer=null;
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 async function start(){
-  const ids=document.getElementById('ids').value.split(/\\n/).map(x=>x.trim()).filter(Boolean);
+  const text=document.getElementById('ids').value;
   const outdir=document.getElementById('outdir').value.trim();
-  if(!ids.length){alert('请先填入至少一个文献编号');return}
+  if(!text.trim()){alert('请先填入文献列表');return}
   if(!outdir){alert('请填写保存位置');return}
   document.getElementById('start').disabled=true;document.getElementById('stop').disabled=false;
-  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids,outdir})});
+  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,outdir})});
   if(!r.ok){alert(await r.text());document.getElementById('start').disabled=false;document.getElementById('stop').disabled=true;return}
   timer=setInterval(poll,1500);poll();
 }
@@ -198,10 +211,13 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { ids, outdir } = JSON.parse(body);
-        if (!Array.isArray(ids) || !ids.length || !outdir) return send(400, '参数不完整');
+        const { text, ids: rawIds, outdir } = JSON.parse(body);
+        const ids = Array.isArray(rawIds) ? rawIds.map(x => String(x).trim()).filter(Boolean) : extractIds(String(text || ''));
+        if (!ids.length) return send(400, '未识别到任何 DOI / PMCID / PMID，请检查粘贴的内容');
+        if (!outdir) return send(400, '参数不完整');
         if (!/^[a-zA-Z]:[\\/]/.test(outdir)) return send(400, '保存位置必须是本机文件夹路径，例如 C:\\Users\\你\\Desktop\\文献PDF');
         fs.mkdirSync(outdir, { recursive: true });
+        log(`已识别 ${ids.length} 条文献编号`);
         runJob(ids, outdir); // 后台跑，不阻塞响应
         send(200, '{"ok":true}');
       } catch (e) { send(400, '请求解析失败: ' + e.message); }

@@ -1,13 +1,27 @@
 // Europe PMC / PMC 批量 PDF 下载器
-// 用法: node download_pdfs.js <ID列表文件> [输出目录]
-// ID列表文件: 每行一个 PMID / PMCID(如PMC13527554) / DOI
+// 用法: node download_pdfs.js <ID列表文件或任意文本文件> [输出目录]
+// 输入文件可以是：每行一个 PMID/PMCID/DOI 的清单，也可以是从 Zotero 复制的参考文献表等任意文本
+// （工具会自动从中提取全部 DOI / PMCID / 纯数字 PMID，自动去重并忽略无关数字）
 const fs = require('fs');
 const path = require('path');
+
+// 从任意混合文本中提取文献编号（DOI / PMCID / 每行独立的纯数字 PMID）
+function extractIds(text) {
+  const ids = [], seen = new Set();
+  const push = x => { const k = x.toLowerCase(); if (!seen.has(k)) { seen.add(k); ids.push(x); } };
+  // 1) DOI：10.开头，前缀4-9位数字，后接斜杠和非空白字符；去掉尾部句号逗号等标点
+  for (const m of text.matchAll(/\b10\.\d{4,9}\/[^\s"'<>，。；、]+/g)) push(m[0].replace(/[.,;:)\]」』]+$/, ''));
+  // 2) PMCID
+  for (const m of text.matchAll(/\bPMC\d{6,9}\b/gi)) push(m[0].toUpperCase());
+  // 3) PMID：整行只有6-9位数字才算（避免误吞年份、页码、期卷号等）
+  for (const line of text.split(/\r?\n/)) { const t = line.trim(); if (/^\d{6,9}$/.test(t)) push(t); }
+  return ids;
+}
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const listFile = process.argv[2];
 const outDir = process.argv[3] || path.join(__dirname, '文献PDF');
-if (!listFile) { console.error('用法: node download_pdfs.js <ID列表文件> [输出目录]'); process.exit(1); }
+if (!listFile) { console.error('用法: node download_pdfs.js <ID列表文件或文本文件> [输出目录]'); process.exit(1); }
 fs.mkdirSync(outDir, { recursive: true });
 
 const sleep = ms => new Promise(s => setTimeout(s, ms));
@@ -91,8 +105,10 @@ async function downloadPdf(pmcid, filename) {
 }
 
 (async () => {
-  const ids = fs.readFileSync(listFile, 'utf8').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  console.log(`共 ${ids.length} 条，输出到 ${outDir}\n`);
+  const raw = fs.readFileSync(listFile, 'utf8');
+  const ids = extractIds(raw);
+  console.log(`从输入中识别出 ${ids.length} 条文献编号，输出到 ${outDir}\n`);
+  if (!ids.length) { console.error('未识别到任何 DOI / PMCID / PMID，请检查输入内容'); process.exit(1); }
   const ok = [], noPmc = [], fail = [];
   for (const id of ids) {
     try {
