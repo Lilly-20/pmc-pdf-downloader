@@ -11,6 +11,13 @@ const { exec } = require('child_process');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 const sleep = ms => new Promise(s => setTimeout(s, ms));
 
+// 平台探测（用于跨平台打开浏览器/文件夹）
+const IS_WIN = process.platform === 'win32';
+const IS_MAC = process.platform === 'darwin';
+function openUrl(url) { exec(IS_WIN ? `start "" "${url}"` : IS_MAC ? `open "${url}"` : `xdg-open "${url}"`); }
+function openFolder(dir) { exec(IS_WIN ? `explorer "${dir}"` : IS_MAC ? `open "${dir}"` : `xdg-open "${dir}"`); }
+function isValidPath(p) { return /^[a-zA-Z]:[\\/]/.test(p) || p.startsWith('/'); }
+
 // ---------- 下载核心（复用自 download_pdfs.js） ----------
 let cookieJar = {};
 function mergeCookies(res) {
@@ -96,23 +103,44 @@ async function downloadPdf(pmcid, outDir, filename) {
   return buf.length;
 }
 
+// ---------- 历史路径持久化 ----------
+const HISTORY_FILE = path.join(os.homedir(), '.pmc-downloader', 'history.json');
+function loadHistory() {
+  try { return JSON.parse(fs.readFileSync(HISTORY_FILE, 'utf8')) || []; }
+  catch (e) { return []; }
+}
+function saveHistory(arr) {
+  try {
+    fs.mkdirSync(path.dirname(HISTORY_FILE), { recursive: true });
+    fs.writeFileSync(HISTORY_FILE, JSON.stringify(arr.slice(0, 10), null, 2));
+  } catch (e) { /* 忽略 */ }
+}
+function addHistory(dir) {
+  const arr = loadHistory().filter(d => d !== dir);
+  arr.unshift(dir);
+  saveHistory(arr);
+  return arr;
+}
+
 // ---------- 任务状态 ----------
 let job = { running: false, log: [], done: 0, total: 0, stopFlag: false };
 function log(msg) { job.log.push({ t: new Date().toLocaleTimeString(), msg }); if (job.log.length > 500) job.log.shift(); }
 
-async function runJob(ids, outDir) {
+async function runJob(ids, outDir, forceOverwrite) {
   job = { running: true, log: [], done: 0, total: ids.length, stopFlag: false };
   const ok = [], noPmc = [], fail = [];
-  log(`任务开始：共 ${ids.length} 篇，保存到 ${outDir}`);
+  log(`任务开始：共 ${ids.length} 篇，保存到 ${outDir}${forceOverwrite ? '（强制覆盖已下载）' : '（已下载自动跳过）'}`);
   for (const id of ids) {
     if (job.stopFlag) { log('已手动停止'); break; }
     try {
       log(`[${job.done + 1}/${ids.length}] 正在查询 ${id} ...`);
       const meta = await resolve(id);
       const fname = sanitize(`${meta.first} ${meta.year} - ${meta.title}`) + '.pdf';
-      if (fs.existsSync(path.join(outDir, fname))) { ok.push(fname); log(`↷ 已存在，跳过：${fname}`); }
+      const fpath = path.join(outDir, fname);
+      if (!forceOverwrite && fs.existsSync(fpath)) { ok.push(fname); log(`↷ 已存在，跳过：${fname}`); }
       else if (!meta.pmcid) { noPmc.push(`${id}: ${meta.title}`); log(`✗ 无 PMC 免费版：《${meta.title.slice(0, 60)}》— 请走 NSTL 文献传递或邮件向作者索要`); }
       else {
+        if (forceOverwrite && fs.existsSync(fpath)) log(`⟳ 覆盖更新：${fname}`);
         const size = await downloadPdf(meta.pmcid, outDir, fname);
         ok.push(fname);
         log(`✓ 已下载 ${(size / 1024 / 1024).toFixed(2)}MB：${fname}`);
@@ -144,14 +172,18 @@ button.gray{background:#8a919c} button:disabled{background:#b9c2cf;cursor:not-al
 .bar{height:8px;background:#e6e9ee;border-radius:4px;overflow:hidden;margin:10px 0}
 .bar>div{height:100%;background:#2f6fed;width:0;transition:width .4s}
 .ok{color:#1a7f37}.bad{color:#c62828}
+.opt{font-weight:400;display:flex;align-items:center;gap:6px;margin-top:8px;font-size:13.5px}
+.opt input{margin:0}
 </style></head><body>
 <h1>📚 PMC 全文批量下载器</h1>
 <div class="card">
   <label>文献列表（每行一个 PMID / PMCID / DOI，或直接粘贴 Zotero 复制的参考文献表，自动识别其中的 DOI）</label>
-  <textarea id="ids" placeholder="可整段粘贴参考文献表，例如：&#10;Austin, Peter C., et al. “Graphical Calibration Curves...” Diagnostic and Prognostic Research 6, no. 1 (2022): 2. https://doi.org/10.1186/s41512-021-00114-6.&#10;&#10;也支持每行一个编号：&#10;42670262&#10;PMC13527554&#10;10.1002/sim.70722"></textarea>
-  <label>保存位置（PDF 都存在这个文件夹）</label>
-  <input type="text" id="outdir">
-  <div class="hint">提示：从 Zotero 全选条目 → 右键“由所选条目创建参考文献表”→ 复制后直接粘贴到上面即可，无需整理格式。下载完的 PDF 拖进 Zotero 对应条目。工具只能下载 PMC 上有免费版的文献，纯付费墙的仍需文献传递或邮件索要。</div>
+  <textarea id="ids" placeholder="可整段粘贴参考文献表，例如：&#10;Austin, Peter C., et al. "Graphical Calibration Curves..." Diagnostic and Prognostic Research 6, no. 1 (2022): 2. https://doi.org/10.1186/s41512-021-00114-6.&#10;&#10;也支持每行一个编号：&#10;42670262&#10;PMC13527554&#10;10.1002/sim.70722"></textarea>
+  <label>保存位置（PDF 都存在这个文件夹；可从下拉选择上次用过的路径）</label>
+  <input type="text" id="outdir" list="dir-history" placeholder="例如 C:\\Users\\你\\Desktop\\文献PDF">
+  <datalist id="dir-history"></datalist>
+  <label class="opt"><input type="checkbox" id="force"> 强制覆盖已下载的同名文件（用于更新旧版本 PDF；不勾则自动跳过已下载）</label>
+  <div class="hint">提示：从 Zotero 全选条目 → 右键"由所选条目创建参考文献表"→ 复制后直接粘贴到上面即可。<b>中断后再跑一遍会自动跳过已下载的，无需手动筛选</b>。下载完的 PDF 拖进 Zotero 对应条目。工具只能下载 PMC 上有免费版的文献，纯付费墙的仍需文献传递或邮件索要。</div>
   <div class="row" style="margin-top:14px">
     <button id="start" onclick="start()">开始下载</button>
     <button id="stop" class="gray" onclick="stop()" disabled>停止</button>
@@ -167,11 +199,15 @@ function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;')}
 async function start(){
   const text=document.getElementById('ids').value;
   const outdir=document.getElementById('outdir').value.trim();
+  const force=document.getElementById('force').checked;
   if(!text.trim()){alert('请先填入文献列表');return}
   if(!outdir){alert('请填写保存位置');return}
   document.getElementById('start').disabled=true;document.getElementById('stop').disabled=false;
-  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,outdir})});
+  const r=await fetch('/api/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text,outdir,forceOverwrite:force})});
   if(!r.ok){alert(await r.text());document.getElementById('start').disabled=false;document.getElementById('stop').disabled=true;return}
+  // 记忆当前路径到 localStorage + 后端历史
+  localStorage.setItem('pmc-outdir',outdir);
+  fetch('/api/history',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir:outdir})});
   timer=setInterval(poll,1500);poll();
 }
 async function stop(){await fetch('/api/stop',{method:'POST'});}
@@ -185,7 +221,15 @@ async function poll(){
   document.getElementById('prog').textContent=s.running?('进度 '+s.done+' / '+s.total):(s.total?('完成 '+s.done+' / '+s.total):'待机中');
   if(!s.running&&s.total>0){document.getElementById('start').disabled=false;document.getElementById('stop').disabled=true;clearInterval(timer)}
 }
-fetch('/api/defaultdir').then(r=>r.text()).then(d=>document.getElementById('outdir').value=d);
+// 加载历史路径到 datalist；优先用 localStorage 上次的，其次历史第一条，最后默认桌面
+fetch('/api/history').then(r=>r.json()).then(arr=>{
+  const dl=document.getElementById('dir-history');
+  dl.innerHTML=arr.map(d=>'<option value="'+esc(d)+'">').join('');
+  const last=localStorage.getItem('pmc-outdir');
+  if(last)document.getElementById('outdir').value=last;
+  else if(arr.length)document.getElementById('outdir').value=arr[0];
+  else fetch('/api/defaultdir').then(r=>r.text()).then(d=>document.getElementById('outdir').value=d);
+}).catch(()=>{fetch('/api/defaultdir').then(r=>r.text()).then(d=>document.getElementById('outdir').value=d);});
 </script></body></html>`;
 
 // ---------- HTTP 服务 ----------
@@ -194,15 +238,24 @@ const server = http.createServer(async (req, res) => {
   const send = (code, body, type = 'application/json; charset=utf-8') => { res.writeHead(code, { 'Content-Type': type }); res.end(body); };
   if (req.method === 'GET' && u.pathname === '/') return send(200, PAGE, 'text/html; charset=utf-8');
   if (req.method === 'GET' && u.pathname === '/api/defaultdir') {
-    const desk = path.join(os.homedir(), 'Desktop');
+    const desk = path.join(os.homedir(), IS_WIN ? 'Desktop' : 'Desktop');
     const dir = path.join(fs.existsSync(desk) ? desk : os.homedir(), '文献PDF');
     return send(200, JSON.stringify(dir));
+  }
+  if (req.method === 'GET' && u.pathname === '/api/history') return send(200, JSON.stringify(loadHistory()));
+  if (req.method === 'POST' && u.pathname === '/api/history') {
+    let body = ''; req.on('data', c => body += c);
+    req.on('end', () => {
+      try { const { dir } = JSON.parse(body); return send(200, JSON.stringify(addHistory(dir))); }
+      catch (e) { return send(400, 'Bad request'); }
+    });
+    return;
   }
   if (req.method === 'GET' && u.pathname === '/api/status') return send(200, JSON.stringify({ running: job.running, log: job.log, done: job.done, total: job.total }));
   if (req.method === 'POST' && u.pathname === '/api/stop') { job.stopFlag = true; return send(200, '{"ok":true}'); }
   if (req.method === 'GET' && u.pathname === '/api/open') {
     const dir = u.searchParams.get('dir') || '';
-    if (/^[a-zA-Z]:[\\/].*/.test(dir) && fs.existsSync(dir)) exec('explorer "' + dir.replace(/"/g, '') + '"');
+    if (isValidPath(dir) && fs.existsSync(dir)) openFolder(dir.replace(/"/g, ''));
     return send(200, '{"ok":true}');
   }
   if (req.method === 'POST' && u.pathname === '/api/start') {
@@ -211,14 +264,14 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => body += c);
     req.on('end', async () => {
       try {
-        const { text, ids: rawIds, outdir } = JSON.parse(body);
+        const { text, ids: rawIds, outdir, forceOverwrite } = JSON.parse(body);
         const ids = Array.isArray(rawIds) ? rawIds.map(x => String(x).trim()).filter(Boolean) : extractIds(String(text || ''));
         if (!ids.length) return send(400, '未识别到任何 DOI / PMCID / PMID，请检查粘贴的内容');
         if (!outdir) return send(400, '参数不完整');
-        if (!/^[a-zA-Z]:[\\/]/.test(outdir)) return send(400, '保存位置必须是本机文件夹路径，例如 C:\\Users\\你\\Desktop\\文献PDF');
+        if (!isValidPath(outdir)) return send(400, '保存位置必须是本机文件夹路径，例如 C:\\Users\\你\\Desktop\\文献PDF 或 /Users/你/Desktop/文献PDF');
         fs.mkdirSync(outdir, { recursive: true });
         log(`已识别 ${ids.length} 条文献编号`);
-        runJob(ids, outdir); // 后台跑，不阻塞响应
+        runJob(ids, outdir, !!forceOverwrite); // 后台跑，不阻塞响应
         send(200, '{"ok":true}');
       } catch (e) { send(400, '请求解析失败: ' + e.message); }
     });
@@ -234,7 +287,7 @@ function listen(port) {
     const url = `http://127.0.0.1:${port}`;
     console.log(`PMC 全文批量下载器已启动：${url}`);
     console.log('保持本窗口开启即可使用；关闭窗口即退出。');
-    if (process.env.PMC_NO_BROWSER !== '1') exec('start "" "' + url + '"');
+    if (process.env.PMC_NO_BROWSER !== '1') openUrl(url);
   });
 }
 listen(3737);
